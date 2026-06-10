@@ -1,0 +1,20 @@
+# Bollinger Squeeze Breakout Trading Bot - Requirements
+# BTC/USDT Perpetual Futures on SharkEx Exchange
+# Version 1.0.0
+
+# Core Dashboard
+streamlit>=1.28.0
+streamlit-autorefresh>=1.0.1
+
+# Data Analysis
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Charting
+plotly>=5.17.0
+
+# HTTP Requests (API client)
+requests>=2.31.0
+
+# Timezone Handling
+pytz>=2023.3
