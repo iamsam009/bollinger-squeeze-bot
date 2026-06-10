@@ -22,6 +22,7 @@ env/
 bot.log
 bot_state.json
 trade_log.json
+session_config.json
 
 # Environment
 .env

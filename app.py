@@ -13,7 +13,9 @@ Main dashboard integrating:
 - Emergency controls
 """
 
+import json
 import logging
+import os
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -100,6 +102,49 @@ logging.basicConfig(
 logger = logging.getLogger("BollingerBot")
 
 # =============================================================================
+# Session Config Persistence (survives browser refreshes)
+# =============================================================================
+SESSION_CONFIG_FILE = "session_config.json"
+
+PERSISTED_KEYS = [
+    "api_key", "api_secret",
+    "bb_period", "bb_std_dev", "bb_squeeze_lookback", "trailing_stop_window",
+    "leverage", "trade_size_inr", "daily_loss_limit_inr", "max_trades_per_day",
+    "usd_inr_rate", "bot_running",
+    "session_1_start", "session_1_end",
+    "session_2_start", "session_2_end",
+    "session_3_start", "session_3_end",
+]
+
+
+def _load_session_config() -> dict:
+    """Load persisted session config from JSON file."""
+    try:
+        if os.path.exists(SESSION_CONFIG_FILE):
+            with open(SESSION_CONFIG_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_session_config() -> None:
+    """Save config keys that should survive refreshes."""
+    try:
+        data = {}
+        for key in PERSISTED_KEYS:
+            if key in st.session_state:
+                val = st.session_state[key]
+                # Skip non-serializable objects (like StateManager)
+                if isinstance(val, (str, int, float, bool, type(None))):
+                    data[key] = val
+        with open(SESSION_CONFIG_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save session config: {e}")
+
+
+# =============================================================================
 # Page Config
 # =============================================================================
 st.set_page_config(
@@ -113,26 +158,32 @@ st.set_page_config(
 # Session State Initialization
 # =============================================================================
 def init_session_state() -> None:
-    """Initialize all Streamlit session state variables."""
-    defaults = {
-        # API Keys
-        "api_key": "",
-        "api_secret": "",
-        "api_configured": False,
+    """Initialize all Streamlit session state variables.
+    Loads persisted config from session_config.json so API keys and
+    parameter edits survive browser refreshes.
+    """
+    # Load persisted config (API keys, strategy params) from disk
+    persisted = _load_session_config()
 
-        # Strategy Parameters (editable in sidebar)
-        "bb_period": BB_PERIOD,
-        "bb_std_dev": BB_STD_DEV,
-        "bb_squeeze_lookback": BB_SQUEEZE_LOOKBACK,
-        "trailing_stop_window": TRAILING_STOP_WINDOW,
-        "leverage": DEFAULT_LEVERAGE,
-        "trade_size_inr": TRADE_SIZE_INR,
-        "daily_loss_limit_inr": DAILY_LOSS_LIMIT_INR,
-        "max_trades_per_day": MAX_TRADES_PER_DAY,
-        "usd_inr_rate": USD_INR_RATE,
+    defaults = {
+        # API Keys (loaded from disk)
+        "api_key": persisted.get("api_key", ""),
+        "api_secret": persisted.get("api_secret", ""),
+        "api_configured": False,  # recomputed below
+
+        # Strategy Parameters (loaded from disk if available)
+        "bb_period": persisted.get("bb_period", BB_PERIOD),
+        "bb_std_dev": persisted.get("bb_std_dev", BB_STD_DEV),
+        "bb_squeeze_lookback": persisted.get("bb_squeeze_lookback", BB_SQUEEZE_LOOKBACK),
+        "trailing_stop_window": persisted.get("trailing_stop_window", TRAILING_STOP_WINDOW),
+        "leverage": persisted.get("leverage", DEFAULT_LEVERAGE),
+        "trade_size_inr": persisted.get("trade_size_inr", TRADE_SIZE_INR),
+        "daily_loss_limit_inr": persisted.get("daily_loss_limit_inr", DAILY_LOSS_LIMIT_INR),
+        "max_trades_per_day": persisted.get("max_trades_per_day", MAX_TRADES_PER_DAY),
+        "usd_inr_rate": persisted.get("usd_inr_rate", USD_INR_RATE),
 
         # Bot State
-        "bot_running": False,
+        "bot_running": persisted.get("bot_running", False),
         "last_cycle_time": None,
         "last_signal": None,
         "last_error": None,
@@ -150,18 +201,23 @@ def init_session_state() -> None:
         # State Manager (initialized once)
         "state_manager": StateManager(),
 
-        # Session times (editable in sidebar)
-        "session_1_start": "09:30",
-        "session_1_end": "12:00",
-        "session_2_start": "13:00",
-        "session_2_end": "15:30",
-        "session_3_start": "19:00",
-        "session_3_end": "22:00",
+        # Session times (loaded from disk if available)
+        "session_1_start": persisted.get("session_1_start", "09:30"),
+        "session_1_end": persisted.get("session_1_end", "12:00"),
+        "session_2_start": persisted.get("session_2_start", "13:00"),
+        "session_2_end": persisted.get("session_2_end", "15:30"),
+        "session_3_start": persisted.get("session_3_start", "19:00"),
+        "session_3_end": persisted.get("session_3_end", "22:00"),
     }
 
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+    # Recompute api_configured
+    st.session_state.api_configured = bool(
+        st.session_state.api_key and st.session_state.api_secret
+    )
 
 
 def add_log(message: str, level: str = "INFO") -> None:
@@ -209,6 +265,8 @@ def render_sidebar() -> None:
         st.session_state.api_key = api_key
         st.session_state.api_secret = api_secret
         st.session_state.api_configured = bool(api_key and api_secret)
+        # Persist API keys immediately
+        _save_session_config()
 
         if st.session_state.api_configured:
             st.success("✅ API Keys Configured")
@@ -265,10 +323,10 @@ def render_sidebar() -> None:
             )
             st.session_state.trade_size_inr = st.number_input(
                 "Trade Size (₹)",
-                min_value=5000,
-                max_value=100000,
+                min_value=5000.0,
+                max_value=100000.0,
                 value=st.session_state.trade_size_inr,
-                step=1000,
+                step=1000.0,
             )
             st.session_state.usd_inr_rate = st.number_input(
                 "USD/INR Rate",
@@ -281,10 +339,10 @@ def render_sidebar() -> None:
         with st.expander("Daily Limits", expanded=False):
             st.session_state.daily_loss_limit_inr = st.number_input(
                 "Daily Loss Limit (₹)",
-                min_value=1000,
-                max_value=50000,
+                min_value=1000.0,
+                max_value=50000.0,
                 value=st.session_state.daily_loss_limit_inr,
-                step=500,
+                step=500.0,
             )
             st.session_state.max_trades_per_day = st.number_input(
                 "Max Trades/Day",
@@ -319,6 +377,9 @@ def render_sidebar() -> None:
             st.session_state.session_3_end = st.text_input(
                 "S3 End", value=st.session_state.session_3_end, key="s3e"
             )
+
+        # Persist all sidebar changes after widget rendering
+        _save_session_config()
 
         st.divider()
 
