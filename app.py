@@ -513,36 +513,19 @@ def handle_emergency_close() -> None:
 # =============================================================================
 # Market Data Fetching
 # =============================================================================
-@st.cache_data(ttl=30)
-def fetch_market_data_cached(
-    symbol: str,
-    interval: str,
-    limit: int,
-    _cache_buster: float,  # Used to invalidate cache
-) -> tuple:
-    """
-    Fetch market data with caching.
-    Returns (klines, current_price, bid, ask)
-    """
-    try:
-        klines = fetch_klines(symbol, interval, limit)
-        price = get_current_price(symbol)
-        bid, ask = get_bid_ask(symbol)
-        return klines, price, bid, ask
-    except Exception as e:
-        logger.error(f"Market data fetch error: {e}")
-        return [], None, None, None
-
-
 def fetch_market_data() -> None:
     """Fetch market data and update session state."""
     try:
-        klines, price, bid, ask = fetch_market_data_cached(
+        # NOTE: No @st.cache_data here. Caching failed API results (empty list / None)
+        # caused the bot to dead-loop with "No market data available" for 30 seconds.
+        # The 60-second auto-refresh + rate limiter in sharkex_client.py prevent abuse.
+        klines = fetch_klines(
             SYMBOL,
             st.session_state.get("kline_interval", KLINE_INTERVAL),
             st.session_state.get("kline_limit", KLINE_LIMIT),
-            time.time() // 30,  # Cache buster every 30s
         )
+        price = get_current_price(SYMBOL)
+        bid, ask = get_bid_ask(SYMBOL)
 
         if price:
             st.session_state.current_price = price
@@ -1316,6 +1299,72 @@ def render_squeeze_status() -> None:
             st.metric("🎯 Breakout Check", "No breakout")
 
 
+def render_next_trade_targets() -> None:
+    """Render breakout trigger prices for the next potential trade."""
+    info = st.session_state.squeeze_info
+    if not info:
+        return
+
+    in_squeeze = info.get("in_squeeze", False)
+    close = info.get("close", 0)
+    highest_high_n = info.get("highest_high_n", 0)
+    lowest_low_n = info.get("lowest_low_n", 0)
+    sma = info.get("sma", 0)
+    upper_band = info.get("upper_band", 0)
+    lower_band = info.get("lower_band", 0)
+
+    if not close or not highest_high_n or not lowest_low_n:
+        return
+
+    with st.expander("🎯 Next Trade Targets", expanded=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### 📈 LONG Entry")
+            long_distance = highest_high_n - close
+            long_distance_pct = (long_distance / close * 100) if close else 0
+
+            st.metric(
+                "Trigger Price (Break Above)",
+                f"${highest_high_n:,.2f}",
+                delta=f"+${long_distance:,.2f} ({long_distance_pct:+.2f}%)",
+            )
+            st.caption(f"Close must exceed the highest high of the last "
+                       f"{st.session_state.get('bb_squeeze_lookback', 20)} candles"
+                       f"{' AND squeeze must be active' if not in_squeeze else ''}")
+            st.write(f"**Est. Entry at Ask:** ${st.session_state.get('ask_price', 'N/A')}")
+            st.write(f"**Upper Band:** ${upper_band:,.2f}  |  **SMA:** ${sma:,.2f}")
+
+        with col2:
+            st.markdown("#### 📉 SHORT Entry")
+            short_distance = close - lowest_low_n
+            short_distance_pct = (short_distance / close * 100) if close else 0
+
+            st.metric(
+                "Trigger Price (Break Below)",
+                f"${lowest_low_n:,.2f}",
+                delta=f"-${short_distance:,.2f} ({short_distance_pct:+.2f}%)",
+            )
+            st.caption(f"Close must drop below the lowest low of the last "
+                       f"{st.session_state.get('bb_squeeze_lookback', 20)} candles"
+                       f"{' AND squeeze must be active' if not in_squeeze else ''}")
+            st.write(f"**Est. Entry at Bid:** ${st.session_state.get('bid_price', 'N/A')}")
+            st.write(f"**Lower Band:** ${lower_band:,.2f}  |  **SMA:** ${sma:,.2f}")
+
+        # Show squeeze precondition status
+        if not in_squeeze:
+            st.warning("⚠️ Squeeze is NOT active — breakout signals will be ignored until squeeze forms")
+        else:
+            st.success("🟠 Squeeze is ACTIVE — breakout signals are armed")
+
+        # Show which side is closer
+        if close < highest_high_n or close > lowest_low_n:
+            if long_distance < short_distance:
+                st.info(f"⚡ LONG trigger is closer (${long_distance:,.2f} away vs ${short_distance:,.2f} for SHORT)")
+            else:
+                st.info(f"⚡ SHORT trigger is closer (${short_distance:,.2f} away vs ${long_distance:,.2f} for LONG)")
+
+
 def render_signal_info() -> None:
     """Render the last signal details."""
     signal = st.session_state.last_signal
@@ -1449,6 +1498,9 @@ def main() -> None:
 
     # Squeeze Status
     render_squeeze_status()
+
+    # Next Trade Targets (breakout trigger prices)
+    render_next_trade_targets()
 
     # Signal Info
     render_signal_info()
