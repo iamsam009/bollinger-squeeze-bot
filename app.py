@@ -65,6 +65,7 @@ from sharkex_client import (
     get_bid_ask,
     get_current_price,
     get_available_balance,
+    fetch_usd_inr_rate,
 )
 from strategy import (
     prepare_strategy_df,
@@ -323,10 +324,10 @@ def render_sidebar() -> None:
             )
             st.session_state.trade_size_inr = st.number_input(
                 "Trade Size (₹)",
-                min_value=5000.0,
+                min_value=500.0,
                 max_value=100000.0,
                 value=st.session_state.trade_size_inr,
-                step=1000.0,
+                step=500.0,
             )
             st.session_state.usd_inr_rate = st.number_input(
                 "USD/INR Rate",
@@ -335,6 +336,16 @@ def render_sidebar() -> None:
                 value=st.session_state.usd_inr_rate,
                 step=0.5,
             )
+            if st.button("🔄 Refresh Rate", help="Fetch live USD/INR rate from forex API"):
+                with st.spinner("Fetching live rate..."):
+                    live_rate = fetch_usd_inr_rate()
+                    if live_rate:
+                        st.session_state.usd_inr_rate = live_rate
+                        st.success(f"Updated: ₹{live_rate:.2f}")
+                        _save_session_config()
+                        st.rerun()
+                    else:
+                        st.error("Could not fetch rate. Check internet connection.")
 
         with st.expander("Daily Limits", expanded=False):
             st.session_state.daily_loss_limit_inr = st.number_input(
@@ -414,7 +425,8 @@ def render_sidebar() -> None:
         # Status indicators
         st.divider()
         ist_now = get_ist_now()
-        in_session = is_trading_session(ist_now)
+        sidebar_sessions = _parse_session_times() or None
+        in_session = is_trading_session(ist_now, sessions=sidebar_sessions)
         session_name = get_current_session_name(ist_now)
 
         st.metric("IST Time", ist_now.strftime("%H:%M:%S"))
@@ -436,6 +448,31 @@ def render_sidebar() -> None:
 # =============================================================================
 # Emergency Close
 # =============================================================================
+def _parse_session_times() -> list:
+    """
+    Parse the sidebar session time strings into a list of
+    (datetime.time, datetime.time) tuples for risk_manager overrides.
+    Returns an empty list if any field is malformed.
+    """
+    from datetime import time as dt_time
+    sessions = []
+    fields = [
+        (st.session_state.session_1_start, st.session_state.session_1_end),
+        (st.session_state.session_2_start, st.session_state.session_2_end),
+        (st.session_state.session_3_start, st.session_state.session_3_end),
+    ]
+    for start_str, end_str in fields:
+        try:
+            sh, sm_val = map(int, start_str.strip().split(":"))
+            start_t = dt_time(sh, sm_val)
+            eh, em = map(int, end_str.strip().split(":"))
+            end_t = dt_time(eh, em)
+            sessions.append((start_t, end_t))
+        except (ValueError, AttributeError):
+            continue
+    return sessions
+
+
 def handle_emergency_close() -> None:
     """Emergency close all positions and cancel orders."""
     if not st.session_state.api_configured:
@@ -801,7 +838,7 @@ def enter_position(sm: StateManager, signal, df: pd.DataFrame) -> None:
         logger.error(traceback.format_exc())
 
 
-def check_session_end_exit(sm: StateManager) -> None:
+def check_session_end_exit(sm: StateManager, sessions=None) -> None:
     """
     Check if we need to exit due to session end.
     Close positions when session ends.
@@ -810,7 +847,7 @@ def check_session_end_exit(sm: StateManager) -> None:
         return
 
     ist_now = get_ist_now()
-    if is_trading_session(ist_now):
+    if is_trading_session(ist_now, sessions=sessions):
         return  # Still in session
 
     # Session ended, close position
@@ -862,14 +899,21 @@ def run_bot_cycle() -> None:
         except Exception:
             pass
 
-    # Check trading conditions
-    can_trade_result, can_trade_reason = sm.can_open_trade()
-    in_session = is_trading_session()
+    # Parse sidebar session times for override
+    sidebar_sessions = _parse_session_times() or None
+
+    # Check trading conditions with sidebar overrides
+    can_trade_result, can_trade_reason = sm.can_open_trade(
+        loss_limit_inr=st.session_state.daily_loss_limit_inr,
+        max_trades=st.session_state.max_trades_per_day,
+        sessions=sidebar_sessions,
+    )
+    in_session = is_trading_session(sessions=sidebar_sessions)
 
     # Manage existing position
     if sm.has_open_position():
         manage_open_position(sm, df)
-        check_session_end_exit(sm)
+        check_session_end_exit(sm, sessions=sidebar_sessions)
         return
 
     # If no position, check for entry signals

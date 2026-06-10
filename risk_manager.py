@@ -11,7 +11,7 @@ Handles:
 
 import logging
 from datetime import datetime, date, time as dt_time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import pytz
 
 from config import (
@@ -40,21 +40,27 @@ def get_ist_now() -> datetime:
     return datetime.now(_ist_tz)
 
 
-def is_trading_session(dt_now: Optional[datetime] = None) -> bool:
+def is_trading_session(
+    dt_now: Optional[datetime] = None,
+    sessions: Optional[List[Tuple[dt_time, dt_time]]] = None,
+) -> bool:
     """
     Check if current IST time falls within any trading session window.
     
-    Sessions:
-    - 09:30 - 12:00 (Morning)
-    - 13:00 - 15:30 (Afternoon)
-    - 19:00 - 22:00 (Evening)
+    Args:
+        dt_now: Datetime to check (defaults to now in IST)
+        sessions: Optional override list of (start, end) time tuples.
+                  If None, uses IST_SESSIONS from config.
     """
     if dt_now is None:
         dt_now = get_ist_now()
 
+    if sessions is None:
+        sessions = IST_SESSIONS
+
     current_time = dt_now.time()
 
-    for start, end in IST_SESSIONS:
+    for start, end in sessions:
         if start <= current_time <= end:
             return True
     return False
@@ -190,24 +196,40 @@ def can_trade(
     daily_pnl_inr: float,
     daily_trade_count: int,
     dt_now: Optional[datetime] = None,
+    loss_limit_inr: Optional[float] = None,
+    max_trades: Optional[int] = None,
+    sessions: Optional[List[Tuple[dt_time, dt_time]]] = None,
 ) -> Tuple[bool, str]:
     """
     Master check: can the bot place a new trade?
 
+    Args:
+        daily_pnl_inr: Current daily P&L in INR
+        daily_trade_count: Number of trades so far today
+        dt_now: Datetime to check (defaults to IST now)
+        loss_limit_inr: Daily loss limit override (uses config default if None)
+        max_trades: Max trades override (uses config default if None)
+        sessions: Session time override (uses config default if None)
+
     Returns:
         (allowed: bool, reason: str)
     """
+    if loss_limit_inr is None:
+        loss_limit_inr = DAILY_LOSS_LIMIT_INR
+    if max_trades is None:
+        max_trades = MAX_TRADES_PER_DAY
+
     if dt_now is None:
         dt_now = get_ist_now()
 
-    if not is_trading_session(dt_now):
+    if not is_trading_session(dt_now, sessions=sessions):
         return False, "Outside trading session hours"
 
-    if not check_daily_loss_limit(daily_pnl_inr):
-        return False, f"Daily loss limit reached (₹{DAILY_LOSS_LIMIT_INR})"
+    if not check_daily_loss_limit(daily_pnl_inr, loss_limit_inr=loss_limit_inr):
+        return False, f"Daily loss limit reached (₹{loss_limit_inr})"
 
-    if not check_max_trades(daily_trade_count):
-        return False, f"Max trades per day reached ({MAX_TRADES_PER_DAY})"
+    if not check_max_trades(daily_trade_count, max_trades=max_trades):
+        return False, f"Max trades per day reached ({max_trades})"
 
     return True, "OK"
 

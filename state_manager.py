@@ -311,12 +311,27 @@ class StateManager:
         """Get number of trades executed today."""
         return self.state.daily_stats.trade_count
 
-    def can_open_trade(self) -> tuple:
-        """Check if a new trade can be opened based on risk limits."""
+    def can_open_trade(
+        self,
+        loss_limit_inr: Optional[float] = None,
+        max_trades: Optional[int] = None,
+        sessions: Optional[list] = None,
+    ) -> tuple:
+        """
+        Check if a new trade can be opened based on risk limits.
+        
+        Args:
+            loss_limit_inr: Daily loss limit override (uses config default if None)
+            max_trades: Max trades override (uses config default if None)
+            sessions: Session time override (uses config default if None)
+        """
         from risk_manager import can_trade
         return can_trade(
             daily_pnl_inr=self.state.daily_stats.total_pnl_inr,
             daily_trade_count=self.state.daily_stats.trade_count,
+            loss_limit_inr=loss_limit_inr,
+            max_trades=max_trades,
+            sessions=sessions,
         )
 
     # -------------------------------------------------------------------------

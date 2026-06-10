@@ -667,3 +667,34 @@ def get_available_balance(api_key: str, api_secret: str) -> Optional[float]:
     except Exception:
         pass
     return None
+
+
+def fetch_usd_inr_rate() -> Optional[float]:
+    """
+    Fetch live USD/INR forex rate from free public APIs.
+    Falls back through multiple providers for reliability.
+    Returns None if all providers fail.
+    """
+    # Try exchangerate-api first (no key needed)
+    try:
+        resp = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5)
+        data = resp.json()
+        rate = data.get("rates", {}).get("INR")
+        if rate:
+            logger.info(f"USD/INR rate from exchangerate-api: {rate}")
+            return float(rate)
+    except Exception as e:
+        logger.warning(f"exchangerate-api failed: {e}")
+
+    # Fallback: frankfurter.app
+    try:
+        resp = requests.get("https://api.frankfurter.app/latest?from=USD&to=INR", timeout=5)
+        data = resp.json()
+        rate = data.get("rates", {}).get("INR")
+        if rate:
+            logger.info(f"USD/INR rate from frankfurter.app: {rate}")
+            return float(rate)
+    except Exception as e:
+        logger.warning(f"frankfurter.app failed: {e}")
+
+    return None
