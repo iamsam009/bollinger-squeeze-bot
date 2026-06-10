@@ -332,9 +332,9 @@ def render_sidebar() -> None:
             st.session_state.usd_inr_rate = st.number_input(
                 "USD/INR Rate",
                 min_value=70.0,
-                max_value=90.0,
+                max_value=120.0,
                 value=st.session_state.usd_inr_rate,
-                step=0.5,
+                step=0.1,
             )
             if st.button("🔄 Refresh Rate", help="Fetch live USD/INR rate from forex API"):
                 with st.spinner("Fetching live rate..."):
