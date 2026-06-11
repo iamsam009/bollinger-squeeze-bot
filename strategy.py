@@ -398,11 +398,13 @@ def klines_to_dataframe(klines: List[Dict]) -> pd.DataFrame:
 
     df = pd.DataFrame(records)
     # Set datetime index
-    if "open_time" in df.columns and df["open_time"].iloc[-1] > 1000000000000:
-        # Milliseconds timestamp
-        df["datetime"] = pd.to_datetime(df["open_time"], unit="ms")
-    elif "open_time" in df.columns:
-        df["datetime"] = pd.to_datetime(df["open_time"], unit="s")
+    if "open_time" in df.columns and len(df) > 0:
+        # SharkEx returns startTime/endTime as strings; convert to int for comparison
+        ot_val = float(df["open_time"].iloc[-1])
+        if ot_val > 1000000000000:
+            df["datetime"] = pd.to_datetime(df["open_time"].astype(float), unit="ms")
+        else:
+            df["datetime"] = pd.to_datetime(df["open_time"].astype(float), unit="s")
     else:
         df["datetime"] = pd.NaT
 
