@@ -247,7 +247,7 @@ def _make_request(
 # Public Market Data Endpoints (No Auth Required)
 # =============================================================================
 def fetch_klines(
-    symbol: str = SYMBOL,
+    pair: str = SYMBOL,
     interval: str = KLINE_INTERVAL,
     limit: int = KLINE_LIMIT,
     price_type: str = "MARK_PRICE",
@@ -256,20 +256,22 @@ def fetch_klines(
     Fetch candlestick/kline data.
     
     From docs: POST /v1/market/klines?priceType=MARK_PRICE
-    (Despite docs showing POST, this is a data-fetch operation)
+    JSON body: {"pair": "BTCINR", "interval": "15m", "limit": 100}
     
-    Returns list of candle dicts with: openTime, open, high, low, close, volume, closeTime, ...
+    Returns list of candle dicts with: startTime, open, high, low, close, volume, endTime, ...
     """
-    params = {
-        "symbol": symbol,
+    # priceType goes in URL query, pair/interval/limit go in JSON body (per docs)
+    params = {"priceType": price_type}
+    json_body = {
+        "pair": pair,
         "interval": interval,
         "limit": limit,
-        "priceType": price_type,
     }
     data = _make_request(
         method="POST",
         endpoint="/v1/market/klines",
         params=params,
+        json_body=json_body,
         is_public=True,
         rate_limit_category="default",
     )
@@ -284,34 +286,63 @@ def fetch_klines(
     return []
 
 
-def fetch_ticker(symbol: str = SYMBOL) -> Dict[str, Any]:
+def fetch_ticker(pair: str = SYMBOL) -> Dict[str, Any]:
     """
     Fetch 24hr ticker data.
-    GET /v1/market/ticker
+    
+    From docs: GET /v1/market/ticker24Hr/{contractPair}
+    Response: {"data": {"e": "24hrTicker", "s": "BTCUSDT", "c": "lastPrice", ...}}
+    
+    Returns the unwrapped "data" dict with normalized keys:
+    lastPrice, highPrice, lowPrice, openPrice, volume, bidPrice, askPrice
     """
-    params = {"symbol": symbol}
-    return _make_request(
+    # Pair goes in URL path, not as query param (per docs)
+    endpoint_with_pair = f"/v1/market/ticker24Hr/{pair}"
+    data = _make_request(
         method="GET",
-        endpoint="/v1/market/ticker",
-        params=params,
+        endpoint=endpoint_with_pair,
         is_public=True,
         rate_limit_category="default",
     )
+    # Unwrap the "data" envelope if present
+    inner = data.get("data", data) if isinstance(data, dict) else data
+    if not isinstance(inner, dict):
+        return {}
+    # Map short doc keys to normalized long keys for downstream consumers
+    return {
+        "symbol": inner.get("s", pair),
+        "lastPrice": inner.get("c", 0),
+        "openPrice": inner.get("o", 0),
+        "highPrice": inner.get("h", 0),
+        "lowPrice": inner.get("l", 0),
+        "volume": inner.get("v", 0),
+        "bidPrice": inner.get("b", 0),
+        "askPrice": inner.get("a", 0),
+        "closePrice": inner.get("c", 0),  # alias
+    }
 
 
-def fetch_depth(symbol: str = SYMBOL, limit: int = 100) -> Dict[str, Any]:
+def fetch_depth(pair: str = SYMBOL, limit: int = 100) -> Dict[str, Any]:
     """
     Fetch order book depth.
-    GET /v1/market/depth
+    
+    From docs: GET /v1/market/depth/{contractPair}
+    Response: {"data": {"e": "depth", "s": "BTCUSDT", "bids": [...], "asks": [...]}}
+    
+    Returns the unwrapped "data" dict with bids/asks lists.
     """
-    params = {"symbol": symbol, "limit": limit}
-    return _make_request(
+    # Pair goes in URL path, not as query param (per docs)
+    endpoint_with_pair = f"/v1/market/depth/{pair}"
+    if limit:
+        endpoint_with_pair += f"?limit={limit}"
+    data = _make_request(
         method="GET",
-        endpoint="/v1/market/depth",
-        params=params,
+        endpoint=endpoint_with_pair,
         is_public=True,
         rate_limit_category="default",
     )
+    # Unwrap the "data" envelope if present
+    return data.get("data", data) if isinstance(data, dict) else data
 
 
 def fetch_exchange_info() -> Dict[str, Any]:

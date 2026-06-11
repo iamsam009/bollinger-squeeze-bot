@@ -13,7 +13,7 @@ from datetime import time as dt_time
 # SharkEx API Configuration
 # Derived from sharkex_docs.html
 # =============================================================================
-SHARKEX_BASE_URL = "https://api.sharkexchange.in/api/v1"
+SHARKEX_BASE_URL = "https://api.sharkexchange.in"
 SHARKEX_AUTH_URL = "https://api.sharkexchange.in"
 
 # API Key & Secret - loaded from Streamlit session_state at runtime

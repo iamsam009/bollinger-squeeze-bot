@@ -362,8 +362,12 @@ def klines_to_dataframe(klines: List[Dict]) -> pd.DataFrame:
     Convert SharkEx kline response to a pandas DataFrame with required columns.
 
     Expected kline format from SharkEx (per docs):
-    [openTime, open, high, low, close, volume, closeTime, quoteVolume, trades, ...]
-    OR list of dicts with keys: openTime, open, high, low, close, volume, closeTime
+    [
+      {"startTime": "1726312200000", "open": "5270382.19", "high": "5270408.64",
+       "low": "5270382.19", "close": "5270382.19", "endTime": "1726312259999", "volume": "59.102"},
+      ...
+    ]
+    OR list of dicts with keys: openTime/startTime, open, high, low, close, volume, closeTime/endTime
     """
     if not klines:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
@@ -381,14 +385,15 @@ def klines_to_dataframe(klines: List[Dict]) -> pd.DataFrame:
                 "close_time": k[6] if len(k) > 6 else 0,
             })
         elif isinstance(k, dict):
+            # SharkEx docs use "startTime"/"endTime"; also support "openTime"/"closeTime"
             records.append({
-                "open_time": k.get("openTime", k.get("open_time", 0)),
+                "open_time": k.get("startTime", k.get("openTime", k.get("open_time", 0))),
                 "open": float(k.get("open", 0)),
                 "high": float(k.get("high", 0)),
                 "low": float(k.get("low", 0)),
                 "close": float(k.get("close", 0)),
                 "volume": float(k.get("volume", 0)),
-                "close_time": k.get("closeTime", k.get("close_time", 0)),
+                "close_time": k.get("endTime", k.get("closeTime", k.get("close_time", 0))),
             })
 
     df = pd.DataFrame(records)
